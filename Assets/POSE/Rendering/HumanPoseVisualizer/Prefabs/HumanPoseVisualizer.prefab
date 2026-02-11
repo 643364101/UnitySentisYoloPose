@@ -1,0 +1,57 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &6882519971957791495
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 3884516855677151671}
+  - component: {fileID: 8564273720384557497}
+  m_Layer: 0
+  m_Name: HumanPoseVisualizer
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &3884516855677151671
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6882519971957791495}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &8564273720384557497
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6882519971957791495}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 20894babbec4f094badc2abe3bb00657, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  poseContainerPrefab: {fileID: 1143161870028929264, guid: 12c840be0a8d4adc879fc14fb79a316d, type: 3}
+  jointPrefab: {fileID: 1325380854747797142, guid: d90f7f2e5b8f4daa885f9441f0f33427, type: 3}
+  bonePrefab: {fileID: 5563526039618411114, guid: ed947d23b5354617b130aa8ee0cc610b, type: 3}
+  boxPrefab: {fileID: 8249600785575815406, guid: b7b00ead839fa0b44856a36b0acc27b3, type: 3}
+  numberPrefab: {fileID: 865285480035301694, guid: 03cf3b808f55ec94a9b3b317eaa575a1, type: 3}
+  bodyPartConnectionsFile: {fileID: 4900000, guid: 0fc008c60a8e44589674b0f455384a5b, type: 3}
+  alpha: 0.7
+  isHead: 1
+  isBox: 1
+  isBone: 1
+  isNumber: 1

@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a04ceb593e5cb0648b02a01ba8756b8e, type: 3}
+  m_Name: yolo26PoseScheme320
+  m_EditorClassIdentifier: 
+  inferenceType: 1
+  modelAsset: {fileID: 5022602860645237092, guid: b753950bfb41d4a42a4a981d7dac860a, type: 3}
+  inputSize: {x: 320, y: 320}
+  backend: 256
+  executionMode: 0
+  confThreshold: 0.35
+  keyThreshold: 0.35
+  nmsThreshold: 0.45
+  minCutoff: 1
+  beta: 10
+  dCutoff: 1
