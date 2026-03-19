@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: yolo11PoseScheme
   m_EditorClassIdentifier: 
   inferenceType: 0
-  modelAsset: {fileID: 5022602860645237092, guid: 39474fd4a7fb8482eb1b0f0310523295, type: 3}
+  modelAsset: {fileID: 5022602860645237092, guid: d92bcd4b60e2b2d47a53ef39d62883ad, type: 3}
   inputSize: {x: 640, y: 640}
   backend: 256
   executionMode: 0

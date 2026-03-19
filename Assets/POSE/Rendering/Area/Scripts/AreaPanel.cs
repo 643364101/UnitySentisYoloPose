@@ -3,94 +3,120 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
+/// <summary>
+/// 区域面板管理器。
+/// 
+/// 主要职责：
+/// 1. 根据配置生成区域 UI
+/// 2. 监听姿态更新
+/// 3. 判断玩家是否进入某个区域
+/// 4. 将区域内人体结果打包为 HumanPoseArea
+/// 
+/// 当前区域判定规则：
+/// - 使用 LeftAnkle / RightAnkle 判断
+/// - 任意一只脚进入区域，即视为该玩家进入区域
+/// 
+/// 坐标原则：
+/// - 输入 poses 为 Display Space 数据
+/// - Area 挂在 cameraView 下，因此可直接使用同局部空间命中检测
+/// 
+/// 注意：
+/// - 当前 PoseManager 仍只缓存单个 HumanPoseArea
+/// - 因此多个区域结果是“逐个分发”的
+/// - 若未来需要同时管理全部区域结果，建议将 PoseManager 扩展为 List<HumanPoseArea>
+/// </summary>
 public class AreaPanel : Singleton<AreaPanel>
 {
-    [Header("Settings")] public Area areasPrefab;
+    [Header("Settings")]
+    public Area areasPrefab;
 
     public Color normalColor = Color.black;
     public Color activeColor = Color.cyan;
 
     private PoseLocalConfig poseLocalConfig;
-    [SerializeField] private List<Area> areaList;
 
-    // ========================================================================
-    // 1. 生命周期与事件监听
-    // ========================================================================
+    [SerializeField]
+    private List<Area> areaList = new List<Area>();
 
     private void OnEnable()
     {
-        // 初始化时加载配置并生成区域
         Refresh();
 
-
-        PoseManager.Instance.OnPoseUpdated += OnPoseUpdated;
+        if (PoseManager.Instance != null)
+            PoseManager.Instance.OnPoseUpdated += OnPoseUpdated;
     }
 
     private void OnDisable()
     {
-        PoseManager.Instance.OnPoseUpdated -= OnPoseUpdated;
+        if (PoseManager.Instance != null)
+            PoseManager.Instance.OnPoseUpdated -= OnPoseUpdated;
     }
 
-    // ========================================================================
-    // 2. 核心回调逻辑
-    // ========================================================================
-
-    /// <summary>
-    /// 当 AI 识别到新数据时自动调用此方法
-    /// </summary>
     private void OnPoseUpdated(List<HumanPose> poses)
     {
-        // 如果配置未加载或区域检测功能未开启，直接跳过
-        if (poseLocalConfig == null) return;
+        if (poseLocalConfig == null || !poseLocalConfig.isActiveArea)
+            return;
 
-        // 1. 计算每个区域里有谁
-        var areaResults = Packet(poses);
-
-        // 2. 处理具体的游戏业务逻辑 (原 Runner 里的逻辑移到这里)
+        List<HumanPoseArea> areaResults = Packet(poses);
         HandleGameLogic(areaResults);
     }
 
     /// <summary>
-    /// 在此处理具体的触发逻辑
+    /// 当前仍沿用“单区域逐条分发”逻辑。
+    /// 若未来要一次处理全部区域，建议改成 List<HumanPoseArea> 统一分发。
     /// </summary>
     private void HandleGameLogic(List<HumanPoseArea> areaResults)
     {
-        foreach (var humanPoseArea in areaResults)
+        for (int i = 0; i < areaResults.Count; i++)
         {
-            PoseManager.Instance.ReceiveFilteringPoseData(humanPoseArea);
+            PoseManager.Instance.ReceiveFilteringPoseData(areaResults[i]);
         }
     }
-    // ========================================================================
-    // 3. 区域检测算法
-    // ========================================================================
 
+    /// <summary>
+    /// 计算每个区域内的玩家列表。
+    /// </summary>
     private List<HumanPoseArea> Packet(List<HumanPose> poses)
     {
-        List<HumanPoseArea> listHumanPoseArea = new List<HumanPoseArea>();
+        List<HumanPoseArea> result = new List<HumanPoseArea>();
 
-        // 获取参考系 (Webcam RawImage)
-        if (PoseManager.Instance.cameraView == null)
-            return listHumanPoseArea;
+        if (PoseManager.Instance == null || PoseManager.Instance.cameraView == null)
+            return result;
 
         RectTransform cameraRect = PoseManager.Instance.cameraView.rectTransform;
 
-        // 遍历所有生成的 UI 区域
+        // 无人时也要刷新区域颜色并输出空结果
+        if (poses == null || poses.Count == 0)
+        {
+            for (int j = 0; j < areaList.Count; j++)
+            {
+                Area currentArea = areaList[j];
+                currentArea.SetColor(normalColor);
+
+                result.Add(new HumanPoseArea
+                {
+                    id = currentArea.areaConfig.id,
+                    humanPoses = new List<HumanPose>()
+                });
+            }
+
+            return result;
+        }
+
         for (int j = 0; j < areaList.Count; j++)
         {
             Area currentArea = areaList[j];
-            RectTransform areaRect = (RectTransform)currentArea.transform;
+            RectTransform areaRect = currentArea.transform as RectTransform;
             List<HumanPose> validPoses = new List<HumanPose>();
 
-            // 遍历所有检测到的人
             for (int i = 0; i < poses.Count; i++)
             {
-                var leftAnkle = poses[i].GetBodyParts(BodyPartsType.LeftAnkle);
-                var rightAnkle = poses[i].GetBodyParts(BodyPartsType.RightAnkle);
+                BodyPart leftAnkle = poses[i].GetBodyPart(BodyPartsType.LeftAnkle);
+                BodyPart rightAnkle = poses[i].GetBodyPart(BodyPartsType.RightAnkle);
 
-                // ✅ 使用 PoseUIUtils 进行高性能、自动适配的判断
-                // 只要有一只脚在区域内就算进入
-                bool isLeftIn = PoseUIUtils.IsInsideLocal(leftAnkle, cameraRect, areaRect);
-                bool isRightIn = PoseUIUtils.IsInsideLocal(rightAnkle, cameraRect, areaRect);
+                // 因为 areaRect 挂在 cameraView 下，所以同局部空间判断最直接
+                bool isLeftIn = PoseHitTestUtils.IsOverUILocal(leftAnkle, cameraRect, areaRect);
+                bool isRightIn = PoseHitTestUtils.IsOverUILocal(rightAnkle, cameraRect, areaRect);
 
                 if (isLeftIn || isRightIn)
                 {
@@ -98,61 +124,62 @@ public class AreaPanel : Singleton<AreaPanel>
                 }
             }
 
-            // 更新 UI 颜色状态 (有人变亮，没人变暗)
             currentArea.SetColor(validPoses.Count > 0 ? activeColor : normalColor);
 
-
-            // 打包结果
-            HumanPoseArea humanPoseArea = new HumanPoseArea
+            result.Add(new HumanPoseArea
             {
                 id = currentArea.areaConfig.id,
                 humanPoses = validPoses
-            };
-            listHumanPoseArea.Add(humanPoseArea);
+            });
         }
 
-        return listHumanPoseArea;
+        return result;
     }
 
-    // ========================================================================
-    // 4. UI 生成与刷新
-    // ========================================================================
-
+    /// <summary>
+    /// 根据配置重建区域 UI。
+    /// </summary>
     public void Refresh()
     {
-        // 1. 清理旧物体
-        foreach (var panel in areaList)
+        for (int i = 0; i < areaList.Count; i++)
         {
-            if (panel != null) Destroy(panel.gameObject);
+            if (areaList[i] != null)
+                Destroy(areaList[i].gameObject);
         }
 
         areaList.Clear();
 
-        // 2. 获取配置
-        poseLocalConfig = PoseManager.Instance.poseLocalConfig;
+        if (PoseManager.Instance == null || PoseManager.Instance.cameraView == null)
+            return;
 
+        poseLocalConfig = PoseManager.Instance.PoseLocalConfig;
+        if (poseLocalConfig == null || poseLocalConfig.areaConfig == null)
+            return;
 
-        if (poseLocalConfig == null || poseLocalConfig.areaConfig == null) return;
-
-        // 3. 生成新区域
-        foreach (AreaConfig areaConfig in poseLocalConfig.areaConfig)
+        for (int i = 0; i < poseLocalConfig.areaConfig.Count; i++)
         {
-            var area = Instantiate(areasPrefab, PoseManager.Instance.cameraView.transform);
-            area.Init(areaConfig); // 确保 Area 脚本有 Init 方法设置位置和大小
+            AreaConfig areaConfig = poseLocalConfig.areaConfig[i];
+            Area area = Instantiate(areasPrefab, PoseManager.Instance.cameraView.transform);
+            area.Init(areaConfig);
             areaList.Add(area);
         }
 
-        // 4. 设置显示状态
         SetActive(poseLocalConfig.isActiveArea);
     }
 
+    /// <summary>
+    /// 显示 / 隐藏所有区域面板。
+    /// </summary>
     public void SetActive(bool active)
     {
-        foreach (var panel in areaList)
+        for (int i = 0; i < areaList.Count; i++)
         {
-            if (panel.TryGetComponent<CanvasGroup>(out var group))
+            Area panel = areaList[i];
+            if (panel == null) continue;
+
+            if (panel.TryGetComponent<CanvasGroup>(out CanvasGroup group))
             {
-                group.alpha = active ? 1 : 0;
+                group.alpha = active ? 1f : 0f;
                 group.blocksRaycasts = active;
                 group.interactable = active;
             }
@@ -167,11 +194,25 @@ public class AreaPanel : Singleton<AreaPanel>
 [Serializable]
 public class AreaConfig
 {
+    /// <summary>
+    /// 区域 ID。
+    /// </summary>
     public int id;
-    public float[] pos; // [x, y]
-    public float[] sizeDelta; // [w, h]
+
+    /// <summary>
+    /// 区域 anchoredPosition，长度应为 2：[x, y]
+    /// </summary>
+    public float[] pos;
+
+    /// <summary>
+    /// 区域 sizeDelta，长度应为 2：[width, height]
+    /// </summary>
+    public float[] sizeDelta;
 }
 
+/// <summary>
+/// 单个区域中的人体结果。
+/// </summary>
 public class HumanPoseArea
 {
     public int id;

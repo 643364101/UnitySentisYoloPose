@@ -1,56 +1,88 @@
-/*
- *FileName:      ResizePanel.cs
- *Description:   通用的UI拖拽与边缘缩放脚本，支持任意Pivot和Canvas模式。
- */
-
 using System.Collections;
 using UnityEngine;
 using UnityEngine.EventSystems;
 
-public enum UI_Edge
+/// <summary>
+/// 面板当前命中的边缘类型。
+/// 
+/// 当前版本仅支持：
+/// - 上 / 下 / 左 / 右
+/// - 中间区域拖拽移动
+/// 
+/// 若未来需要支持四角同时缩放，可再扩展：
+/// - TopLeft
+/// - TopRight
+/// - BottomLeft
+/// - BottomRight
+/// </summary>
+public enum UIEdge
 {
     None,
     Top,
-    Down,
+    Bottom,
     Left,
-    Right,
-    TopLeft,
-    TopRight,
-    BottomLeft,
-    BottomRight
+    Right
 }
 
-public class ResizePanel : MonoBehaviour, IPointerDownHandler, IDragHandler, IPointerEnterHandler, IPointerExitHandler, IPointerUpHandler
+/// <summary>
+/// 通用 UI 面板拖拽与边缘缩放组件。
+/// 
+/// 主要功能：
+/// 1. 点击中间区域：拖拽移动
+/// 2. 点击靠近边缘区域：拖拽缩放
+/// 3. 支持不同 Pivot
+/// 4. 支持不同 Canvas 模式
+/// 
+/// 设计说明：
+/// - 在 ScreenSpace-Overlay 模式下，arCamera 可为空
+/// - 在 ScreenSpace-Camera / WorldSpace 模式下，建议传入 UI 所用相机
+/// - 内部会根据 Canvas.scaleFactor 将屏幕像素 delta 转换为 UI 逻辑坐标 delta
+/// 
+/// 适用场景：
+/// - 编辑区域框
+/// - 拍照取景框拖拽缩放
+/// - 调试面板 / 可编辑 UI 框
+/// </summary>
+public class ResizePanel : MonoBehaviour,
+    IPointerDownHandler,
+    IDragHandler,
+    IPointerEnterHandler,
+    IPointerExitHandler,
+    IPointerUpHandler
 {
-    [Header("设置")] [Tooltip("渲染UI的相机，ScreenSpace-Overlay模式可不填")]
+    [Header("Settings")]
+    [Tooltip("渲染 UI 的相机。若 Canvas 为 ScreenSpace-Overlay，可不填。")]
     public Camera arCamera;
 
-    [Tooltip("检测边距百分比 (0-1)")] [Range(0f, 1f)]
-    public float MonitorPercent = 0.8f;
+    [Tooltip("边缘检测百分比（0~1）。值越大，越容易被识别为边缘区域。")]
+    [Range(0f, 1f)]
+    public float monitorPercent = 0.8f;
 
-    [Header("限制")] public Vector2 minSize = new Vector2(100, 100);
-    public Vector2 maxSize = new Vector2(1920, 1080);
+    [Header("Limits")]
+    public Vector2 minSize = new Vector2(100f, 100f);
+    public Vector2 maxSize = new Vector2(1920f, 1080f);
 
-    [Header("边缘高亮图片")] public Transform Right_Image;
-    public Transform Down_Image;
-    public Transform Top_Image;
-    public Transform Left_Image;
+    [Header("Edge Highlight")]
+    public Transform rightImage;
+    public Transform bottomImage;
+    public Transform topImage;
+    public Transform leftImage;
 
-    // 内部变量
     private RectTransform panelRectTransform;
-    private Canvas _parentCanvas; // 缓存Canvas以获取缩放比
+    private Canvas parentCanvas;
+
     private bool isPointerDown = false;
-    private UI_Edge currentEdge = UI_Edge.None;
+    private UIEdge currentEdge = UIEdge.None;
+    private Coroutine edgeJudgeCoroutine;
 
     private void Start()
     {
-        panelRectTransform = transform.GetComponent<RectTransform>();
-        _parentCanvas = GetComponentInParent<Canvas>();
+        panelRectTransform = GetComponent<RectTransform>();
+        parentCanvas = GetComponentInParent<Canvas>();
 
-        // 自动获取相机 (如果是Overlay模式，arCamera保持null即可)
-        if (arCamera == null && _parentCanvas != null && _parentCanvas.renderMode != RenderMode.ScreenSpaceOverlay)
+        if (arCamera == null && parentCanvas != null && parentCanvas.renderMode != RenderMode.ScreenSpaceOverlay)
         {
-            arCamera = _parentCanvas.worldCamera;
+            arCamera = parentCanvas.worldCamera;
         }
 
         SetActiveEdgeImage(false);
@@ -58,36 +90,35 @@ public class ResizePanel : MonoBehaviour, IPointerDownHandler, IDragHandler, IPo
 
     public void OnPointerDown(PointerEventData data)
     {
-        // 按下时，无论是否选中边缘，都标记为按下状态
         isPointerDown = true;
 
-        // 如果选中了边缘，停止检测协程，锁定当前的 Edge 状态
-        if (currentEdge != UI_Edge.None)
+        // 若已经命中边缘，则停止边缘检测协程，锁定当前 edge
+        if (currentEdge != UIEdge.None)
         {
-            StopCoroutine("EdgeJudgeCoroutine");
+            StopEdgeJudgeCoroutine();
         }
     }
 
     public void OnDrag(PointerEventData data)
     {
-        if (panelRectTransform == null || !isPointerDown) return;
+        if (panelRectTransform == null || !isPointerDown)
+            return;
 
-        // 获取 Canvas 缩放系数
-        float scale = _parentCanvas != null ? _parentCanvas.scaleFactor : 1.0f;
-        if (scale == 0) scale = 1.0f;
+        // 将屏幕像素 delta 转换成 UI 逻辑坐标 delta
+        float scale = parentCanvas != null ? parentCanvas.scaleFactor : 1f;
+        if (Mathf.Approximately(scale, 0f))
+            scale = 1f;
 
-        // 将屏幕像素 delta 转换为 UI 逻辑坐标 delta
         Vector2 localDelta = data.delta / scale;
 
-        // 1. 普通拖拽移动
-        if (currentEdge == UI_Edge.None)
+        // 1. 中间区域拖拽移动
+        if (currentEdge == UIEdge.None)
         {
-            // 直接使用 localDelta 累加，这样无论 Pivot 在哪，移动都是线性的
             panelRectTransform.anchoredPosition += localDelta;
             return;
         }
 
-        // 2. 边缘缩放逻辑
+        // 2. 边缘缩放
         Vector2 oldSize = panelRectTransform.sizeDelta;
         Vector2 newSize = oldSize;
         Vector2 pivot = panelRectTransform.pivot;
@@ -95,32 +126,27 @@ public class ResizePanel : MonoBehaviour, IPointerDownHandler, IDragHandler, IPo
 
         switch (currentEdge)
         {
-            case UI_Edge.Right:
+            case UIEdge.Right:
                 newSize.x = Mathf.Clamp(oldSize.x + localDelta.x, minSize.x, maxSize.x);
-                // 补偿公式：(新宽 - 旧宽) * pivot.x
                 posDelta.x = (newSize.x - oldSize.x) * pivot.x;
                 break;
 
-            case UI_Edge.Left:
+            case UIEdge.Left:
                 newSize.x = Mathf.Clamp(oldSize.x - localDelta.x, minSize.x, maxSize.x);
-                // 补偿公式：-(新宽 - 旧宽) * (1 - pivot.x)
                 posDelta.x = -(newSize.x - oldSize.x) * (1f - pivot.x);
                 break;
 
-            case UI_Edge.Top:
+            case UIEdge.Top:
                 newSize.y = Mathf.Clamp(oldSize.y + localDelta.y, minSize.y, maxSize.y);
-                // 补偿公式：(新高 - 旧高) * pivot.y
                 posDelta.y = (newSize.y - oldSize.y) * pivot.y;
                 break;
 
-            case UI_Edge.Down:
+            case UIEdge.Bottom:
                 newSize.y = Mathf.Clamp(oldSize.y - localDelta.y, minSize.y, maxSize.y);
-                // 补偿公式：-(新高 - 旧高) * (1 - pivot.y)
                 posDelta.y = -(newSize.y - oldSize.y) * (1f - pivot.y);
                 break;
         }
 
-        // 应用更改
         panelRectTransform.sizeDelta = newSize;
         panelRectTransform.anchoredPosition += posDelta;
     }
@@ -128,39 +154,62 @@ public class ResizePanel : MonoBehaviour, IPointerDownHandler, IDragHandler, IPo
     public void OnPointerUp(PointerEventData eventData)
     {
         isPointerDown = false;
-        // 抬起后重启边缘检测
-        StartCoroutine("EdgeJudgeCoroutine");
+        StartEdgeJudgeCoroutine();
     }
 
     public void OnPointerEnter(PointerEventData eventData)
     {
         if (isPointerDown) return;
-        StartCoroutine("EdgeJudgeCoroutine");
+        StartEdgeJudgeCoroutine();
     }
 
     public void OnPointerExit(PointerEventData eventData)
     {
         if (isPointerDown) return;
 
-        StopCoroutine("EdgeJudgeCoroutine");
-        currentEdge = UI_Edge.None;
+        StopEdgeJudgeCoroutine();
+        currentEdge = UIEdge.None;
         SetActiveEdgeImage(false);
     }
 
+    /// <summary>
+    /// 统一控制边缘高亮显示开关。
+    /// </summary>
     private void SetActiveEdgeImage(bool isActive)
     {
-        if (Right_Image) Right_Image.gameObject.SetActive(isActive);
-        if (Down_Image) Down_Image.gameObject.SetActive(isActive);
-        if (Left_Image) Left_Image.gameObject.SetActive(isActive);
-        if (Top_Image) Top_Image.gameObject.SetActive(isActive);
+        if (rightImage) rightImage.gameObject.SetActive(isActive);
+        if (bottomImage) bottomImage.gameObject.SetActive(isActive);
+        if (leftImage) leftImage.gameObject.SetActive(isActive);
+        if (topImage) topImage.gameObject.SetActive(isActive);
     }
 
-    // 边缘检测协程
-    IEnumerator EdgeJudgeCoroutine()
+    private void StartEdgeJudgeCoroutine()
+    {
+        StopEdgeJudgeCoroutine();
+        edgeJudgeCoroutine = StartCoroutine(EdgeJudgeCoroutine());
+    }
+
+    private void StopEdgeJudgeCoroutine()
+    {
+        if (edgeJudgeCoroutine != null)
+        {
+            StopCoroutine(edgeJudgeCoroutine);
+            edgeJudgeCoroutine = null;
+        }
+    }
+
+    /// <summary>
+    /// 鼠标悬停时持续检测当前命中的边缘类型。
+    /// </summary>
+    private IEnumerator EdgeJudgeCoroutine()
     {
         while (true)
         {
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(panelRectTransform, Input.mousePosition, arCamera, out Vector2 localMousePos))
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                    panelRectTransform,
+                    Input.mousePosition,
+                    arCamera,
+                    out Vector2 localMousePos))
             {
                 yield return null;
                 continue;
@@ -173,65 +222,85 @@ public class ResizePanel : MonoBehaviour, IPointerDownHandler, IDragHandler, IPo
         }
     }
 
-    private UI_Edge GetCurrentEdge(Vector2 pos)
+    /// <summary>
+    /// 根据鼠标在本地坐标中的位置，判断当前命中的边缘。
+    /// </summary>
+    private UIEdge GetCurrentEdge(Vector2 pos)
     {
         float width = panelRectTransform.rect.width;
         float height = panelRectTransform.rect.height;
 
-        float xThreshold = width * 0.5f * MonitorPercent;
-        float yThreshold = height * 0.5f * MonitorPercent;
+        float xThreshold = width * 0.5f * monitorPercent;
+        float yThreshold = height * 0.5f * monitorPercent;
 
-        if (pos.x < -xThreshold) return UI_Edge.Left;
-        if (pos.x > xThreshold) return UI_Edge.Right;
-        if (pos.y < -yThreshold) return UI_Edge.Down;
-        if (pos.y > yThreshold) return UI_Edge.Top;
+        if (pos.x < -xThreshold) return UIEdge.Left;
+        if (pos.x > xThreshold) return UIEdge.Right;
+        if (pos.y < -yThreshold) return UIEdge.Bottom;
+        if (pos.y > yThreshold) return UIEdge.Top;
 
-        return UI_Edge.None;
+        return UIEdge.None;
     }
 
-    private void UpdateEdgeImages(UI_Edge edge, Vector2 localPos)
+    /// <summary>
+    /// 根据当前命中的边缘，刷新边缘高亮条位置。
+    /// </summary>
+    private void UpdateEdgeImages(UIEdge edge, Vector2 localPos)
     {
         SetActiveEdgeImage(false);
+
         float w = panelRectTransform.rect.width;
         float h = panelRectTransform.rect.height;
-
-        // 计算高亮条的位置限制 (防止跑出UI)
-        float halfW = w / 2;
-        float halfH = h / 2;
+        float halfW = w * 0.5f;
+        float halfH = h * 0.5f;
 
         switch (edge)
         {
-            case UI_Edge.Left:
-                if (Left_Image)
+            case UIEdge.Left:
+                if (leftImage)
                 {
-                    Left_Image.gameObject.SetActive(true);
-                    Left_Image.localPosition = new Vector3(Left_Image.localPosition.x, Mathf.Clamp(localPos.y, -halfH, halfH), 0);
+                    leftImage.gameObject.SetActive(true);
+                    leftImage.localPosition = new Vector3(
+                        leftImage.localPosition.x,
+                        Mathf.Clamp(localPos.y, -halfH, halfH),
+                        0f
+                    );
                 }
-
                 break;
-            case UI_Edge.Right:
-                if (Right_Image)
-                {
-                    Right_Image.gameObject.SetActive(true);
-                    Right_Image.localPosition = new Vector3(Right_Image.localPosition.x, Mathf.Clamp(localPos.y, -halfH, halfH), 0);
-                }
 
+            case UIEdge.Right:
+                if (rightImage)
+                {
+                    rightImage.gameObject.SetActive(true);
+                    rightImage.localPosition = new Vector3(
+                        rightImage.localPosition.x,
+                        Mathf.Clamp(localPos.y, -halfH, halfH),
+                        0f
+                    );
+                }
                 break;
-            case UI_Edge.Top:
-                if (Top_Image)
-                {
-                    Top_Image.gameObject.SetActive(true);
-                    Top_Image.localPosition = new Vector3(Mathf.Clamp(localPos.x, -halfW, halfW), Top_Image.localPosition.y, 0);
-                }
 
+            case UIEdge.Top:
+                if (topImage)
+                {
+                    topImage.gameObject.SetActive(true);
+                    topImage.localPosition = new Vector3(
+                        Mathf.Clamp(localPos.x, -halfW, halfW),
+                        topImage.localPosition.y,
+                        0f
+                    );
+                }
                 break;
-            case UI_Edge.Down:
-                if (Down_Image)
-                {
-                    Down_Image.gameObject.SetActive(true);
-                    Down_Image.localPosition = new Vector3(Mathf.Clamp(localPos.x, -halfW, halfW), Down_Image.localPosition.y, 0);
-                }
 
+            case UIEdge.Bottom:
+                if (bottomImage)
+                {
+                    bottomImage.gameObject.SetActive(true);
+                    bottomImage.localPosition = new Vector3(
+                        Mathf.Clamp(localPos.x, -halfW, halfW),
+                        bottomImage.localPosition.y,
+                        0f
+                    );
+                }
                 break;
         }
     }

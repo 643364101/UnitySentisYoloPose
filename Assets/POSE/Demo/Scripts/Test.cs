@@ -2,31 +2,61 @@ using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 
+/// <summary>
+/// 姿态系统综合测试脚本。
+/// 
+/// 主要演示：
+/// 1. 手势驱动按钮
+/// 2. 空中触碰普通 UI
+/// 3. 空中触碰独立 Canvas / 独立 UI Camera 的 UI
+/// 4. 手部跟随 2D UI
+/// 5. 手部跟随 3D 物体
+/// 6. 手部碰撞 3D Collider
+/// 
+/// 这是一个“业务示例脚本”，用于验证：
+/// - BodyPartExtensions
+/// - PoseHitTestUtils
+/// - ToAnchoredPos / ToWorldPos
+/// - OnPoseUpdated / OnLimbsUpdated
+/// 等功能是否协同正常。
+/// </summary>
 public class Test : MonoBehaviour
 {
-    [Header("Gesture Buttons (手势触发)")] public ARButton left;
+    [Header("Gesture Buttons (手势触发)")]
+    public ARButton left;
     public ARButton leftUp;
     public ARButton right;
     public ARButton rightUp;
 
+    [Header("Touch Buttons (触碰触发)")]
+    public ARButton touchBtn_Default;     // 普通 UI
+    public ARButton touchBtn_SeparateUI;  // 独立 Canvas / UI Camera 的 UI
+    public Collider touchCollider_Cube;   // 3D 物体
+    public Camera uiCamera;               // 独立 UI Canvas 使用的相机
 
-    [Header("Touch Buttons (触碰触发 - 新增)")] public ARButton touchBtn_Default; // 普通UI触碰
-    public ARButton touchBtn_3D; // 3D UI触碰
-    public Collider touchCollider_Cube; // 3D 物体触碰
-    public Camera uiCamera; // 用于 WorldSpace UI 射线检测
-
-    [Header("2D UI Tracking")] public RectTransform leftHandUI;
+    [Header("2D UI Tracking")]
+    public RectTransform leftHandUI;
     public RectTransform rightHandUI;
 
-    [Header("3D World Tracking")] public Transform leftHand3D;
+    [Header("3D World Tracking")]
+    public Transform leftHand3D;
     public Transform rightHand3D;
 
-    [Header("Debug")] public TextMeshProUGUI txtHint;
+    [Header("Debug")]
+    public TextMeshProUGUI txtHint;
+
+    /// <summary>
+    /// 缓存默认姿态来源区域，通常是 cameraView.rectTransform。
+    /// </summary>
+    private RectTransform _sourceRect;
 
     private void Start()
     {
-        // 自动获取相机 (防空)
-        if (uiCamera == null) uiCamera = Camera.main;
+        if (uiCamera == null)
+            uiCamera = Camera.main;
+
+        if (PoseManager.Instance != null && PoseManager.Instance.cameraView != null)
+            _sourceRect = PoseManager.Instance.cameraView.rectTransform;
 
         if (left) left.onClick.AddListener(() => ShowHint("Gesture: Left Middle"));
         if (leftUp) leftUp.onClick.AddListener(() => ShowHint("Gesture: Left Up"));
@@ -34,7 +64,25 @@ public class Test : MonoBehaviour
         if (rightUp) rightUp.onClick.AddListener(() => ShowHint("Gesture: Right Up"));
 
         if (touchBtn_Default) touchBtn_Default.onClick.AddListener(() => ShowHint("Touched: Default UI"));
-        if (touchBtn_3D) touchBtn_3D.onClick.AddListener(() => ShowHint("Touched: 3D UI"));
+        if (touchBtn_SeparateUI) touchBtn_SeparateUI.onClick.AddListener(() => ShowHint("Touched: Separate UI"));
+    }
+
+    private void OnEnable()
+    {
+        if (PoseManager.Instance != null)
+        {
+            PoseManager.Instance.OnPoseUpdated += OnPoseUpdated;
+            PoseManager.Instance.OnLimbsUpdated += OnLimbsUpdated;
+        }
+    }
+
+    private void OnDisable()
+    {
+        if (PoseManager.Instance != null)
+        {
+            PoseManager.Instance.OnPoseUpdated -= OnPoseUpdated;
+            PoseManager.Instance.OnLimbsUpdated -= OnLimbsUpdated;
+        }
     }
 
     private void ShowHint(string msg)
@@ -43,138 +91,143 @@ public class Test : MonoBehaviour
         Debug.Log(msg);
     }
 
-    void OnEnable()
+    // ========================================================================
+    // 1. 手势逻辑
+    // ========================================================================
+
+    /// <summary>
+    /// 收到手势更新后，刷新对应 ARButton 的触发状态。
+    /// </summary>
+    private void OnLimbsUpdated(GestureType type)
     {
-        if (PoseManager.Instance == null) return;
-        PoseManager.Instance.OnPoseUpdated += OnPoseUpdated;
-        PoseManager.Instance.OnFilteringPoseUpdated += OnFilteringPoseUpdated;
-        PoseManager.Instance.OnLimbsUpdated += OnLimbsUpdated;
+        UpdateBtnState(left, type == GestureType.LeftMiddle);
+        UpdateBtnState(leftUp, type == GestureType.LeftUp);
+        UpdateBtnState(right, type == GestureType.RightMiddle);
+        UpdateBtnState(rightUp, type == GestureType.RightUp);
     }
 
-    void OnDisable()
-    {
-        if (PoseManager.Instance == null) return;
-        PoseManager.Instance.OnPoseUpdated -= OnPoseUpdated;
-        PoseManager.Instance.OnFilteringPoseUpdated -= OnFilteringPoseUpdated;
-        PoseManager.Instance.OnLimbsUpdated -= OnLimbsUpdated;
-    }
+    // ========================================================================
+    // 2. 姿态更新
+    // ========================================================================
 
-    // --- 1. 手势逻辑 (完全保留) ---
-    private void OnLimbsUpdated(HandWaveDetector.GestureType type)
+    /// <summary>
+    /// 姿态更新回调：
+    /// - UI 跟随
+    /// - 3D 跟随
+    /// - UI 触碰
+    /// - 3D 触碰
+    /// </summary>
+    private void OnPoseUpdated(List<HumanPose> poses)
     {
-        UpdateBtnState(left, type == HandWaveDetector.GestureType.LeftMiddle);
-        UpdateBtnState(leftUp, type == HandWaveDetector.GestureType.LeftUp);
-        UpdateBtnState(right, type == HandWaveDetector.GestureType.RightMiddle);
-        UpdateBtnState(rightUp, type == HandWaveDetector.GestureType.RightUp);
-    }
+        if (_sourceRect == null && PoseManager.Instance != null && PoseManager.Instance.cameraView != null)
+            _sourceRect = PoseManager.Instance.cameraView.rectTransform;
 
-    // --- 2. 2D UI 跟随 & 触碰检测 (修改处) ---
-    private void OnFilteringPoseUpdated(HumanPoseArea humanPoseArea)
-    {
-        // 安全检查
-        if (humanPoseArea.humanPoses.Count == 0 || humanPoseArea.id != 0 || PoseManager.Instance.cameraView == null)
+        if (poses == null || poses.Count == 0 || _sourceRect == null)
         {
-            if (leftHandUI) leftHandUI.gameObject.SetActive(false);
-            if (rightHandUI) rightHandUI.gameObject.SetActive(false);
-
-            // 没人时重置触碰按钮
-            ResetTouchButtons();
+            HideAllTrackers();
+            ResetTouchTargets();
             return;
         }
 
-        // 获取参考系
-        RectTransform referenceRect = PoseManager.Instance.cameraView.rectTransform;
-        HumanPose pose = humanPoseArea.humanPoses[0];
+        HumanPose pose = poses[0];
 
-        var leftWrist = pose.GetBodyParts(BodyPartsType.LeftWrist);
-        var rightWrist = pose.GetBodyParts(BodyPartsType.RightWrist);
+        BodyPart leftWrist = pose.GetBodyPart(BodyPartsType.LeftWrist);
+        BodyPart rightWrist = pose.GetBodyPart(BodyPartsType.RightWrist);
 
-        UpdateHandUI(leftHandUI, leftWrist, referenceRect);
-        UpdateHandUI(rightHandUI, rightWrist, referenceRect);
+        // 2D UI 跟随
+        UpdateHandUI(leftHandUI, leftWrist, _sourceRect);
+        UpdateHandUI(rightHandUI, rightWrist, _sourceRect);
+
+        // 3D 跟随
+        UpdateHand3D(leftHand3D, leftWrist);
+        UpdateHand3D(rightHand3D, rightWrist);
+
+        // 触碰检测
+        CheckAirTouch(leftWrist, rightWrist);
     }
 
-    // --- 新增方法：检测所有触碰目标 ---
+    // ========================================================================
+    // 3. 触碰检测
+    // ========================================================================
+
+    /// <summary>
+    /// 检测左右手是否碰到：
+    /// - 普通 UI
+    /// - 独立 Canvas / 独立 Camera 的 UI
+    /// - 3D Collider
+    /// </summary>
     private void CheckAirTouch(BodyPart leftHand, BodyPart rightHand)
     {
-        // 1. 普通 2D UI (IsInside)
+        // A. 普通 UI
         if (touchBtn_Default != null)
         {
             RectTransform target = touchBtn_Default.GetComponent<RectTransform>();
-            bool isTouched = leftHand.IsInside(target) || rightHand.IsInside(target);
+
+            bool isTouched =
+                leftHand.IsInsideUI(_sourceRect, target) ||
+                rightHand.IsInsideUI(_sourceRect, target);
+
             UpdateBtnState(touchBtn_Default, isTouched);
         }
 
-        // 2. 3D UI / World Space UI (IsInside3D)
-        if (touchBtn_3D != null)
+        // B. 独立 Canvas / 独立 UI Camera 的 UI
+        if (touchBtn_SeparateUI != null)
         {
-            RectTransform target = touchBtn_3D.GetComponent<RectTransform>();
-            // 需要指定渲染 UI 的相机
-            bool isTouched = leftHand.IsInside3D(target, uiCamera) || rightHand.IsInside3D(target, uiCamera);
-            UpdateBtnState(touchBtn_3D, isTouched);
+            RectTransform target = touchBtn_SeparateUI.GetComponent<RectTransform>();
+
+            bool isTouched =
+                leftHand.IsInsideUI(_sourceRect, target, uiCamera) ||
+                rightHand.IsInsideUI(_sourceRect, target, uiCamera);
+
+            UpdateBtnState(touchBtn_SeparateUI, isTouched);
         }
 
-        // 3. 3D 物体 / Collider (IsTouching)
+        // C. 3D Collider
         if (touchCollider_Cube != null)
         {
-            // 使用主相机射线检测
-            bool isHit = leftHand.IsTouching(touchCollider_Cube) || rightHand.IsTouching(touchCollider_Cube);
+            bool isHit =
+                leftHand.IsTouching3D(touchCollider_Cube) ||
+                rightHand.IsTouching3D(touchCollider_Cube);
 
-            // 简单的变色反馈
-            var renderer = touchCollider_Cube.GetComponent<Renderer>();
+            Renderer renderer = touchCollider_Cube.GetComponent<Renderer>();
             if (renderer != null)
             {
                 renderer.material.color = isHit ? Color.green : Color.white;
             }
 
-            if (isHit) ShowHint("Touched: 3D Cube");
+            if (isHit)
+            {
+                ShowHint("Touched: 3D Cube");
+            }
         }
     }
 
-    // --- 3. 3D 物体跟随 (完全保留) ---
-    private void OnPoseUpdated(List<HumanPose> poses)
-    {
-        if (poses == null || poses.Count == 0)
-        {
-            if (leftHand3D) leftHand3D.gameObject.SetActive(false);
-            if (rightHand3D) rightHand3D.gameObject.SetActive(false);
-            return;
-        }
+    // ========================================================================
+    // 4. 辅助
+    // ========================================================================
 
-        HumanPose pose = poses[0];
-        var leftWrist = pose.GetBodyParts(BodyPartsType.LeftWrist);
-        var rightWrist = pose.GetBodyParts(BodyPartsType.RightWrist);
-
-        if (leftHand3D != null)
-        {
-            leftHand3D.gameObject.SetActive(leftWrist.hasValue && leftWrist.score > 0.3f);
-            if (leftWrist.hasValue) leftHand3D.position = leftWrist.ToWorldPos();
-        }
-
-        if (rightHand3D != null)
-        {
-            rightHand3D.gameObject.SetActive(rightWrist.hasValue && rightWrist.score > 0.3f);
-            if (rightWrist.hasValue) rightHand3D.position = rightWrist.ToWorldPos();
-        }
-
-        // --- 执行触碰检测 (新增逻辑) ---
-        CheckAirTouch(leftWrist, rightWrist);
-    }
-
-    // --- 辅助方法 ---
+    /// <summary>
+    /// 更新按钮触发状态。
+    /// </summary>
     private void UpdateBtnState(ARButton btn, bool isActive)
     {
         if (btn == null) return;
+
         if (isActive) btn.SetProgress();
         else btn.BreakOffProgress();
     }
 
-    private void UpdateHandUI(RectTransform ui, BodyPart part, RectTransform refer)
+    /// <summary>
+    /// 更新 2D UI 跟随位置。
+    /// </summary>
+    private void UpdateHandUI(RectTransform ui, BodyPart part, RectTransform sourceRect)
     {
         if (ui == null) return;
+
         if (part.hasValue && part.score > 0.3f)
         {
             ui.gameObject.SetActive(true);
-            ui.anchoredPosition = part.ToAnchoredPos(refer);
+            ui.anchoredPosition = part.ToAnchoredPos(sourceRect);
         }
         else
         {
@@ -182,11 +235,49 @@ public class Test : MonoBehaviour
         }
     }
 
-    private void ResetTouchButtons()
+    /// <summary>
+    /// 更新 3D 物体跟随位置。
+    /// </summary>
+    private void UpdateHand3D(Transform hand, BodyPart part)
+    {
+        if (hand == null) return;
+
+        if (part.hasValue && part.score > 0.3f)
+        {
+            hand.gameObject.SetActive(true);
+            hand.position = part.ToWorldPos();
+        }
+        else
+        {
+            hand.gameObject.SetActive(false);
+        }
+    }
+
+    /// <summary>
+    /// 隐藏所有跟随物体。
+    /// </summary>
+    private void HideAllTrackers()
+    {
+        if (leftHandUI) leftHandUI.gameObject.SetActive(false);
+        if (rightHandUI) rightHandUI.gameObject.SetActive(false);
+
+        if (leftHand3D) leftHand3D.gameObject.SetActive(false);
+        if (rightHand3D) rightHand3D.gameObject.SetActive(false);
+    }
+
+    /// <summary>
+    /// 重置触碰目标状态。
+    /// </summary>
+    private void ResetTouchTargets()
     {
         UpdateBtnState(touchBtn_Default, false);
-        UpdateBtnState(touchBtn_3D, false);
+        UpdateBtnState(touchBtn_SeparateUI, false);
+
         if (touchCollider_Cube != null)
-            touchCollider_Cube.GetComponent<Renderer>().material.color = Color.white;
+        {
+            Renderer renderer = touchCollider_Cube.GetComponent<Renderer>();
+            if (renderer != null)
+                renderer.material.color = Color.white;
+        }
     }
 }

@@ -2,52 +2,73 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 
+/// <summary>
+/// 单个区域 UI。
+/// 
+/// 作用：
+/// - 根据 AreaConfig 初始化位置 / 尺寸 / 文本
+/// - 提供颜色切换
+/// - 可在编辑模式下将运行时拖动结果回写到配置对象
+/// </summary>
 public class Area : MonoBehaviour
 {
-    [Header("References")] public Image imgArea;
+    [Header("References")]
+    public Image imgArea;
     public TextMeshProUGUI txtId;
 
-    [Header("Data")] public AreaConfig areaConfig;
+    [Header("Data")]
+    public AreaConfig areaConfig;
 
-    [Header("Debug")] [Tooltip("勾选后，移动 UI 会实时回写数据到 areaConfig")]
+    [Header("Debug")]
+    [Tooltip("勾选后，运行时移动 UI 会实时回写到 areaConfig。仅用于调试编辑。")]
     public bool isEditable = false;
 
-    // 缓存 RectTransform 以提升性能
     private RectTransform _rectTransform;
 
     public void Init(AreaConfig config)
     {
         areaConfig = config;
 
-        // 设置显示 ID
         if (txtId != null)
-        {
             txtId.text = (config.id + 1).ToString();
-        }
 
         _rectTransform = GetComponent<RectTransform>();
-        _rectTransform.localPosition = new Vector2(config.pos[0], config.pos[1]);
-        _rectTransform.sizeDelta = new Vector2(config.sizeDelta[0], config.sizeDelta[1]);
+        if (_rectTransform == null)
+        {
+            Debug.LogError("[Area] 缺少 RectTransform。");
+            return;
+        }
+
+        // 容错：防止 JSON 数据不完整
+        if (areaConfig.pos == null || areaConfig.pos.Length < 2)
+            areaConfig.pos = new float[2];
+
+        if (areaConfig.sizeDelta == null || areaConfig.sizeDelta.Length < 2)
+            areaConfig.sizeDelta = new float[2] { 100f, 100f };
+
+        _rectTransform.anchoredPosition = new Vector2(areaConfig.pos[0], areaConfig.pos[1]);
+        _rectTransform.sizeDelta = new Vector2(areaConfig.sizeDelta[0], areaConfig.sizeDelta[1]);
     }
 
     public void SetColor(Color color)
     {
-        imgArea.color = color;
+        if (imgArea != null)
+            imgArea.color = color;
     }
 
-    void Update()
+    private void Update()
     {
-        // 性能优化：只有在编辑模式下才执行回写逻辑
-        // 在正式发布时，建议把 isEditable 设为 false
-        if (!isEditable || areaConfig == null) return;
+        if (!isEditable || areaConfig == null || _rectTransform == null)
+            return;
 
-        // 实时将 UI 的变动同步回 Config 对象
-        // 这样如果你在运行时拖动了 UI，AreaPanel 里的 Config 数据也会更新
-        // (注意：这不会自动保存到磁盘，需要你另外写保存逻辑)
-        areaConfig.pos[0] = _rectTransform.localPosition.x;
-        areaConfig.pos[1] = _rectTransform.localPosition.y;
+        // 将运行时 UI 位置回写到配置对象
+        Vector2 pos = _rectTransform.anchoredPosition;
+        Vector2 size = _rectTransform.sizeDelta;
 
-        areaConfig.sizeDelta[0] = _rectTransform.sizeDelta.x;
-        areaConfig.sizeDelta[1] = _rectTransform.sizeDelta.y;
+        areaConfig.pos[0] = pos.x;
+        areaConfig.pos[1] = pos.y;
+
+        areaConfig.sizeDelta[0] = size.x;
+        areaConfig.sizeDelta[1] = size.y;
     }
 }
